@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PPVFRA Variety Browser</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+<style>
+:root {
+  --bg: #0d0f14;
+  --surface: #151820;
+  --surface2: #1c2030;
+  --border: #252a38;
+  --border2: #2e3448;
+  --text: #e2e6f0;
+  --muted: #6b7494;
+  --accent: #4f8ef7;
+  --accent2: #7c5fe6;
+  --green: #34d399;
+  --amber: #fbbf24;
+  --rose: #f87171;
+  --teal: #22d3ee;
+  --radius: 10px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; overflow: hidden; font-size: 13px; }
+
+/* ── Ultra-thin scrollbars ── */
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+* { scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+
+/* ── Topbar ── */
+#topbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 20px;
+  display: flex; align-items: center; gap: 14px; flex-shrink: 0;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.4);
+}
+.logo { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.logo-icon { width: 32px; height: 32px; background: linear-gradient(135deg, var(--accent), var(--accent2)); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+.logo-text { font-size: 15px; font-weight: 700; color: var(--text); }
+.logo-sub  { font-size: 10px; color: var(--muted); font-weight: 400; }
+#search-wrap { flex: 1; position: relative; max-width: 480px; }
+#search {
+  width: 100%; background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: var(--radius); padding: 8px 12px 8px 38px;
+  color: var(--text); font-size: 13px; font-family: 'Inter', sans-serif; outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+#search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,142,247,0.12); }
+#search::placeholder { color: var(--muted); }
+.search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 14px; pointer-events: none; }
+#result-count { font-size: 12px; color: var(--muted); white-space: nowrap; margin-left: auto; }
+
+/* ── Body ── */
+#body { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Sidebar ── */
+#sidebar {
+  width: 220px; min-width: 220px; background: var(--surface);
+  border-right: 1px solid var(--border); overflow-y: auto; padding: 14px 12px;
+  flex-shrink: 0; display: flex; flex-direction: column; gap: 0;
+}
+.filter-label {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1.2px; color: var(--muted); margin: 12px 0 6px 2px;
+}
+.filter-label:first-of-type { margin-top: 0; }
+.pill-group { display: flex; flex-wrap: wrap; gap: 4px; }
+.pill {
+  display: inline-flex; align-items: center; padding: 3px 9px;
+  border-radius: 20px; font-size: 11px; font-weight: 500;
+  background: var(--surface2); border: 1px solid var(--border2);
+  color: var(--muted); cursor: pointer; transition: all 0.15s;
+  font-family: 'Inter', sans-serif; white-space: nowrap;
+  user-select: none;
+}
+.pill:hover { border-color: var(--accent); color: var(--accent); }
+.pill.active {
+  background: rgba(79,142,247,0.18); border-color: var(--accent);
+  color: var(--accent); font-weight: 600;
+}
+/* per-group accent colours */
+.pill-group[data-group="category"] .pill.active { background: rgba(251,191,36,0.15); border-color: #fbbf24; color: #fbbf24; }
+.pill-group[data-group="variety_type"] .pill.active { background: rgba(52,211,153,0.15); border-color: #34d399; color: #34d399; }
+.pill-group[data-group="classification"] .pill.active { background: rgba(124,95,230,0.2); border-color: var(--accent2); color: var(--accent2); }
+.pill-group[data-group="season"] .pill.active { background: rgba(34,211,238,0.15); border-color: #22d3ee; color: #22d3ee; }
+.pill-group[data-group="irrigation"] .pill.active { background: rgba(79,142,247,0.18); border-color: var(--accent); color: var(--accent); }
+.pill-group[data-group="maturity"] .pill.active { background: rgba(248,113,113,0.15); border-color: var(--rose); color: var(--rose); }
+.btn-clear {
+  margin-top: 14px; width: 100%; padding: 7px; border: 1px solid var(--border2);
+  border-radius: 7px; background: transparent; font-size: 11px; cursor: pointer;
+  color: var(--muted); font-family: 'Inter', sans-serif; transition: all 0.2s;
+}
+.btn-clear:hover { background: var(--rose); color: #fff; border-color: var(--rose); }
+
+/* ── Main area ── */
+#main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── Table ── */
+#table-wrap { flex: 1; overflow-y: auto; }
+table { width: 100%; border-collapse: collapse; }
+thead { position: sticky; top: 0; background: var(--surface); z-index: 2; }
+th {
+  padding: 10px 14px; text-align: left; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted);
+  border-bottom: 1px solid var(--border2); white-space: nowrap;
+  user-select: none;
+}
+th.sortable { cursor: pointer; transition: color 0.15s; }
+th.sortable:hover { color: var(--text); }
+th.sort-active { color: var(--accent); }
+th .sort-icon { display: inline-block; margin-left: 4px; font-size: 9px; opacity: 0.5; }
+th.sort-active .sort-icon { opacity: 1; }
+td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr.row { cursor: pointer; transition: background 0.12s; }
+tr.row:hover { background: var(--surface2); }
+tr.row.active { background: rgba(79,142,247,0.1); }
+tr.row.active td { border-bottom-color: rgba(79,142,247,0.2); }
+
+.denom { font-weight: 600; color: var(--text); }
+.crop  { color: var(--muted); font-size: 11px; margin-top: 1px; }
+
+/* Category chips */
+.chip {
+  display: inline-block; padding: 2px 9px; border-radius: 20px;
+  font-size: 10px; font-weight: 600; white-space: nowrap;
+}
+.chip-Cereal    { background: rgba(251,191,36,0.15);  color: #fbbf24; }
+.chip-Oilseed   { background: rgba(248,113,113,0.15); color: #f87171; }
+.chip-Pulse     { background: rgba(52,211,153,0.15);  color: #34d399; }
+.chip-Vegetable { background: rgba(34,211,238,0.15);  color: #22d3ee; }
+.chip-Fruit     { background: rgba(251,146,60,0.15);  color: #fb923c; }
+.chip-Flower    { background: rgba(232,121,249,0.15); color: #e879f9; }
+.chip-Spice     { background: rgba(167,139,250,0.15); color: #a78bfa; }
+.chip-Fiber     { background: rgba(148,163,184,0.15); color: #94a3b8; }
+.chip-Timber    { background: rgba(180,120,60,0.15);  color: #b47c3c; }
+.chip-Cash-Crop { background: rgba(52,211,153,0.12);  color: #6ee7b7; }
+.chip-Other     { background: rgba(107,116,148,0.15); color: var(--muted); }
+
+.tag-vt { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 500; background: var(--surface2); color: var(--muted); border: 1px solid var(--border2); }
+
+.season-badges { display: flex; flex-wrap: wrap; gap: 3px; }
+.sbadge { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: rgba(79,142,247,0.12); color: var(--accent); }
+
+.states-cell { font-size: 11px; color: var(--muted); }
+
+#empty-msg { padding: 80px; text-align: center; color: var(--muted); }
+#empty-msg .em-icon { font-size: 40px; margin-bottom: 12px; }
+#empty-msg p { font-size: 14px; }
+#loading { padding: 80px; text-align: center; color: var(--muted); }
+.spinner { width: 28px; height: 28px; border: 3px solid var(--border2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; margin: 0 auto 12px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Pagination ── */
+#pagination {
+  border-top: 1px solid var(--border); padding: 10px 16px;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface); flex-shrink: 0;
+}
+.pg-btn {
+  border: 1px solid var(--border2); background: var(--surface2);
+  padding: 5px 16px; border-radius: 7px; cursor: pointer;
+  font-size: 12px; color: var(--text); font-family: 'Inter', sans-serif;
+  transition: all 0.15s;
+}
+.pg-btn:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pg-btn:disabled { opacity: 0.3; cursor: default; }
+#pg-info { font-size: 12px; color: var(--muted); flex: 1; text-align: center; }
+
+/* ── Detail panel ── */
+#detail {
+  width: 0; background: var(--surface); border-left: 1px solid var(--border);
+  overflow: hidden; flex-shrink: 0; transition: width 0.25s cubic-bezier(.4,0,.2,1);
+}
+#detail.open { width: 440px; overflow-y: auto; }
+#detail-inner { padding: 22px; min-width: 440px; }
+#detail-close {
+  float: right; background: var(--surface2); border: 1px solid var(--border2);
+  width: 28px; height: 28px; border-radius: 7px; cursor: pointer; color: var(--muted);
+  font-size: 14px; display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; margin-top: -4px;
+}
+#detail-close:hover { background: var(--rose); border-color: var(--rose); color: #fff; }
+.d-name { font-size: 20px; font-weight: 700; margin-bottom: 4px; color: var(--text); line-height: 1.3; }
+.d-sub  { font-size: 12px; color: var(--muted); margin-bottom: 18px; font-style: italic; }
+.sec-title {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1.2px; color: var(--accent); margin: 22px 0 10px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border);
+}
+.frow { display: flex; gap: 8px; padding: 5px 0; }
+.fkey { color: var(--muted); min-width: 140px; flex-shrink: 0; font-size: 12px; }
+.fval { color: var(--text); word-break: break-word; font-size: 12px; }
+.dus-tbl { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.dus-tbl td { padding: 5px 8px; border-bottom: 1px solid var(--border); font-size: 11px; }
+.dus-tbl td:first-child { color: var(--muted); width: 55%; }
+.dus-tbl td:last-child  { color: var(--text); font-weight: 500; }
+.ref-name { font-size: 11px; font-weight: 700; color: var(--accent2); margin: 12px 0 4px; }
+.d-loading { text-align: center; padding: 60px 20px; color: var(--muted); }
+
+/* ── View tabs ── */
+#view-tabs {
+  display: flex; gap: 4px; padding: 8px 16px;
+  border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0;
+}
+.view-tab {
+  padding: 5px 16px; border-radius: 6px; font-size: 12px; font-weight: 500;
+  border: 1px solid var(--border2); background: transparent; color: var(--muted);
+  cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.15s;
+}
+.view-tab:hover { color: var(--text); border-color: var(--accent); }
+.view-tab.active { background: rgba(79,142,247,0.15); border-color: var(--accent); color: var(--accent); }
+
+/* ── Map container ── */
+#map-wrap { flex: 1; display: none; position: relative; }
+#map { width: 100%; height: 100%; }
+#map-legend {
+  position: absolute; bottom: 36px; left: 16px; z-index: 1000;
+  background: rgba(255,255,255,0.93); border: 1px solid #cdd5e0;
+  border-radius: 8px; padding: 10px 14px; font-size: 11px;
+  backdrop-filter: blur(4px); color: #333;
+}
+#map-legend .leg-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+#map-legend .leg-row:last-child { margin-bottom: 0; }
+.leg-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+#map-status {
+  position: absolute; bottom: 36px; right: 16px; z-index: 1000;
+  background: rgba(255,255,255,0.93); border: 1px solid #cdd5e0;
+  border-radius: 6px; padding: 5px 12px; font-size: 11px; color: #555;
+  backdrop-filter: blur(4px);
+}
+/* clickable map markers */
+.leaflet-interactive { cursor: pointer !important; }
+/* markercluster count bubble */
+.marker-cluster-small  div,
+.marker-cluster-medium div,
+.marker-cluster-large  div { font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="logo">
+    <div class="logo-icon">🌾</div>
+    <div>
+      <div class="logo-text">PPVFRA Browser</div>
+      <div class="logo-sub">Plant Variety Journal Explorer</div>
+    </div>
+  </div>
+  <div id="search-wrap">
+    <span class="search-icon">🔍</span>
+    <input id="search" type="text" placeholder="Search denomination, crop, applicant…" autocomplete="off">
+  </div>
+  <span id="result-count"></span>
+</div>
+
+<div id="body">
+
+  <div id="sidebar">
+    <div class="filter-label">Source PDF</div>
+    <div class="pill-group" id="f-source_pdf" data-group="source_pdf"></div>
+
+    <div class="filter-label">Category</div>
+    <div class="pill-group" id="f-category" data-group="category"></div>
+
+    <div class="filter-label">Variety Type</div>
+    <div class="pill-group" id="f-variety_type" data-group="variety_type"></div>
+
+    <div class="filter-label">Classification</div>
+    <div class="pill-group" id="f-classification" data-group="classification"></div>
+
+    <div class="filter-label">Season</div>
+    <div class="pill-group" id="f-season" data-group="season"></div>
+
+    <div class="filter-label">Irrigation</div>
+    <div class="pill-group" id="f-irrigation" data-group="irrigation"></div>
+
+    <div class="filter-label">Maturity</div>
+    <div class="pill-group" id="f-maturity" data-group="maturity"></div>
+
+    <div class="filter-label">Applicant Type</div>
+    <div class="pill-group" id="f-applicant_type" data-group="applicant_type">
+      <button class="pill" data-value="individual" onclick="pillClick(this.parentElement,'individual')">Individual</button>
+      <button class="pill" data-value="organization" onclick="pillClick(this.parentElement,'organization')">Organization</button>
+    </div>
+
+    <div class="filter-label">State</div>
+    <div class="pill-group" id="f-state" data-group="state"></div>
+
+    <button class="btn-clear" onclick="clearFilters()">✕ Clear All</button>
+  </div>
+
+  <div id="main">
+    <div id="view-tabs">
+      <button class="view-tab active" id="tab-table" onclick="switchView('table')">⊞ Table</button>
+      <button class="view-tab"        id="tab-map"   onclick="switchView('map')">⊙ Map</button>
+    </div>
+    <div id="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="sortable" data-sort="denomination" onclick="toggleSort(this)">Denomination <span class="sort-icon">↕</span></th>
+            <th class="sortable" data-sort="category" onclick="toggleSort(this)">Category <span class="sort-icon">↕</span></th>
+            <th class="sortable" data-sort="variety_type" onclick="toggleSort(this)">Type <span class="sort-icon">↕</span></th>
+            <th class="sortable" data-sort="classification" onclick="toggleSort(this)">Class <span class="sort-icon">↕</span></th>
+            <th>Season</th>
+            <th class="sortable" data-sort="maturity" onclick="toggleSort(this)">Maturity <span class="sort-icon">↕</span></th>
+            <th>States</th>
+            <th class="sortable" data-sort="filing_date" onclick="toggleSort(this)">Filed <span class="sort-icon">↕</span></th>
+            <th class="sortable" data-sort="source_pdf" onclick="toggleSort(this)">Source <span class="sort-icon">↕</span></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div id="empty-msg" style="display:none">
+        <div class="em-icon">🌱</div>
+        <p>No records found matching your filters.</p>
+      </div>
+      <div id="loading">
+        <div class="spinner"></div>
+        <p>Loading varieties…</p>
+      </div>
+    </div>
+    <div id="map-wrap">
+      <div id="map"></div>
+      <div id="map-legend">
+        <div class="leg-row"><div class="leg-dot" style="background:#4f8ef7"></div><span>Applicant location</span></div>
+        <div class="leg-row"><div class="leg-dot" style="background:#fbbf24"></div><span>Suitability region</span></div>
+      </div>
+      <div id="map-status">—</div>
+    </div>
+    <div id="pagination">
+      <button class="pg-btn" id="pg-prev" onclick="changePage(-1)" disabled>← Prev</button>
+      <span id="pg-info"></span>
+      <button class="pg-btn" id="pg-next" onclick="changePage(1)" disabled>Next →</button>
+    </div>
+  </div>
+
+  <div id="detail">
+    <div id="detail-inner">
+      <button id="detail-close" onclick="closeDetail()">✕</button>
+      <div id="detail-content"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const LIMIT = 1000;
+let page = 1, totalRecords = 0, searchTimer = null, activeId = null;
+let sortField = 'denomination', sortOrder = 'asc';
+
+// ── Filter state (pill buttons) ───────────────────────────────────────────────
+// Each filter group stores a Set of selected values (empty = no filter)
+const filterState = {
+  source_pdf: new Set(), category: new Set(), variety_type: new Set(),
+  classification: new Set(), season: new Set(), irrigation: new Set(),
+  maturity: new Set(), applicant_type: new Set(), state: new Set()
+};
+
+function pillClick(groupEl, value) {
+  const group = groupEl.dataset.group;
+  // toggle: add if absent, remove if present
+  if (filterState[group].has(value)) {
+    filterState[group].delete(value);
+  } else {
+    filterState[group].add(value);
+  }
+  groupEl.querySelectorAll('.pill').forEach(p => {
+    p.classList.toggle('active', filterState[group].has(p.dataset.value));
+  });
+  page = 1; load();
+}
+
+function getFilters() {
+  return { search: document.getElementById('search').value.trim() };
+}
+
+function buildQuery(f) {
+  const p = new URLSearchParams({ page, limit: LIMIT, sort: sortField, order: sortOrder });
+  if (f.search) p.set('search', f.search);
+  // append one param per selected value (server reads them as a list)
+  Object.entries(filterState).forEach(([key, set]) => {
+    if (key === 'applicant_type') {
+      set.forEach(v => p.append('applicant_type', v));
+    } else {
+      set.forEach(v => p.append(key, v));
+    }
+  });
+  return p.toString();
+}
+
+function applyFilters() { page = 1; load(); }
+function clearFilters() {
+  Object.keys(filterState).forEach(k => { filterState[k] = new Set(); });
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+  document.getElementById('search').value = '';
+  page = 1; load();
+}
+function changePage(d) { page = Math.max(1, page + d); load(); }
+
+// ── Column sorting ────────────────────────────────────────────────────────────
+function toggleSort(th) {
+  const field = th.dataset.sort;
+  if (sortField === field) {
+    sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortField = field; sortOrder = 'asc';
+  }
+  // update header styles
+  document.querySelectorAll('th.sortable').forEach(h => {
+    const icon = h.querySelector('.sort-icon');
+    if (h.dataset.sort === sortField) {
+      h.classList.add('sort-active');
+      icon.textContent = sortOrder === 'asc' ? '↑' : '↓';
+    } else {
+      h.classList.remove('sort-active');
+      icon.textContent = '↕';
+    }
+  });
+  page = 1; load();
+}
+
+// ── Load data ─────────────────────────────────────────────────────────────────
+async function load() {
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('empty-msg').style.display = 'none';
+  document.getElementById('tbody').innerHTML = '';
+
+  const f = getFilters();
+  try {
+    const res  = await fetch(`/api/varieties?${buildQuery(f)}`);
+    const data = await res.json();
+
+    totalRecords = data.total;
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('result-count').textContent =
+      `${totalRecords.toLocaleString()} record${totalRecords !== 1 ? 's' : ''}`;
+
+    const totalPages = Math.ceil(totalRecords / LIMIT) || 1;
+    document.getElementById('pg-info').textContent = `Page ${page} / ${totalPages}`;
+    document.getElementById('pg-prev').disabled = page <= 1;
+    document.getElementById('pg-next').disabled = page >= totalPages;
+
+    if (!data.data || !data.data.length) {
+      document.getElementById('empty-msg').style.display = 'block';
+      return;
+    }
+    renderRows(data.data);
+    if (currentView === 'map') loadMap();
+  } catch(e) {
+    document.getElementById('loading').innerHTML =
+      '<p style="color:var(--rose)">⚠ Failed to connect to server. Is uvicorn running?</p>';
+  }
+}
+
+function chipClass(cat) {
+  const map = { Cereal:'Cereal', Oilseed:'Oilseed', Pulse:'Pulse',
+    Vegetable:'Vegetable', Fruit:'Fruit', Flower:'Flower', Spice:'Spice',
+    Fiber:'Fiber', Timber:'Timber', 'Cash Crop':'Cash-Crop' };
+  return 'chip chip-' + (map[cat] || 'Other');
+}
+
+function renderRows(rows) {
+  const tbody = document.getElementById('tbody');
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.className = 'row' + (r._id === activeId ? ' active' : '');
+    tr.onclick = () => openDetail(r._id, tr);
+
+    const seasons = (r.season || []).map(s => `<span class="sbadge">${s}</span>`).join('');
+    const statesTxt = (() => {
+      const s = r.states_normalized || r.states || [];
+      return s.length ? s.slice(0,2).join(', ') + (s.length > 2 ? ` +${s.length-2}` : '') : '—';
+    })();
+
+    tr.innerHTML = `
+      <td>
+        <div class="denom">${esc(r.denomination || '—')}</div>
+        <div class="crop">${esc(r.crop_name || '')}${r.scientific_name ? ' · <i>'+esc(r.scientific_name)+'</i>' : ''}</div>
+      </td>
+      <td><span class="${chipClass(r.category)}">${esc(r.category || '—')}</span></td>
+      <td><span class="tag-vt">${esc(r.variety_type || '—')}</span></td>
+      <td>${esc(r.classification || '—')}</td>
+      <td><div class="season-badges">${seasons || '—'}</div></td>
+      <td>${esc(r.maturity || '—')}</td>
+      <td class="states-cell">${esc(statesTxt)}</td>
+      <td style="white-space:nowrap;color:var(--muted)">${esc(r.filing_date || '—')}</td>
+      <td style="color:var(--muted);font-size:11px">${esc((r.source_pdf||'').replace('.pdf',''))}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ── Detail panel ──────────────────────────────────────────────────────────────
+async function openDetail(id, tr = null) {
+  if (activeId === id && tr) { closeDetail(); return; }  // table: toggle off
+  activeId = id;
+  document.querySelectorAll('.row').forEach(r => r.classList.remove('active'));
+  if (tr) tr.classList.add('active');
+  document.getElementById('detail').classList.add('open');
+  document.getElementById('detail-content').innerHTML =
+    '<div class="d-loading"><div class="spinner"></div><p>Loading…</p></div>';
+
+  try {
+    const res = await fetch(`/api/variety/${id}`);
+    const doc = await res.json();
+    renderDetail(doc);
+  } catch(e) {
+    document.getElementById('detail-content').innerHTML =
+      '<p style="color:var(--rose);padding:20px">Failed to load detail.</p>';
+  }
+}
+
+function closeDetail() {
+  activeId = null;
+  document.getElementById('detail').classList.remove('open');
+  document.querySelectorAll('.row').forEach(r => r.classList.remove('active'));
+}
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function frow(label, val) {
+  if (val === null || val === undefined || val === '' || (Array.isArray(val) && !val.length)) return '';
+  const display = Array.isArray(val) ? val.join(', ') : val;
+  return `<div class="frow"><span class="fkey">${label}</span><span class="fval">${esc(display)}</span></div>`;
+}
+
+// ── Agronomic attribute formatting ──────────────────────────────────────────
+// agronomic_attributes keys often encode their unit in the name
+// (fertilizer_n_kg_ha, oil_content_pct, shelf_life_days, ...) — strip the
+// suffix for the label and use it to format the value.
+const AGRO_UNIT_SUFFIXES = [
+  ['_kg_ha',      'kg/ha'],
+  ['_micronaire', 'micronaire'],
+  ['_brix',       '°Brix'],
+  ['_pct',        '%'],
+  ['_mm',         'mm'],
+  ['_cm',         'cm'],
+  ['_days',       'days'],
+  ['_g',          'g'],
+];
+
+// Fields whose unit isn't encoded as a name suffix (checked before AGRO_UNIT_SUFFIXES).
+const AGRO_EXACT_UNITS = {
+  days_to_flowering: 'days',
+  days_to_maturity:  'days',
+  days_to_fruiting:  'days',
+  ccs_t_ha:          't/ha',
+};
+
+function titleCase(s) {
+  return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatAgroLabel(key) {
+  let label = key;
+  for (const [suffix] of AGRO_UNIT_SUFFIXES) {
+    if (label.endsWith(suffix)) { label = label.slice(0, -suffix.length); break; }
+  }
+  return titleCase(label);
+}
+
+// Returns a display string for a single agronomic_attributes value, or null
+// to skip the row entirely (e.g. an empty/all-null structured object).
+function formatAgroValue(key, v) {
+  if (v === null || v === undefined) return null;
+
+  if (typeof v === 'object' && !Array.isArray(v)) {
+    // Range objects: yield_potential, yield_lint, yield_kapas, yield_secondary, seed_rate
+    if ('min' in v && 'max' in v) {
+      const range = v.min === v.max ? `${v.min}` : `${v.min}–${v.max}`;
+      return v.unit ? `${range} ${v.unit}` : range;
+    }
+    // Fertilizer split: fertilizer_irrigated / fertilizer_rainfed -> {n, p, k}
+    if ('n' in v && 'p' in v && 'k' in v) {
+      return `N:${v.n}  P:${v.p}  K:${v.k} kg/ha`;
+    }
+    // Anything else unexpected — fall back rather than silently dropping it.
+    return JSON.stringify(v);
+  }
+
+  if (Array.isArray(v)) {
+    return v.length ? v.map((x) => titleCase(String(x))).join(', ') : null;
+  }
+
+  if (typeof v === 'number') {
+    if (key in AGRO_EXACT_UNITS) return `${v} ${AGRO_EXACT_UNITS[key]}`;
+    for (const [suffix, unit] of AGRO_UNIT_SUFFIXES) {
+      if (key.endsWith(suffix)) return `${v} ${unit}`;
+    }
+    return String(v);
+  }
+
+  // Plain string values are short enum-like tags (e.g. "very_firm", "sensitive") here —
+  // notes/ipm_schedule are handled separately before this function is called.
+  return titleCase(String(v));
+}
+
+// pest_disease_resistance gets its own block — badges per resistance level
+// instead of a single JSON-dump row.
+const PDR_LEVELS = [
+  ['resistant',              'Resistant',              '#34d399'],
+  ['moderately_resistant',   'Moderately Resistant',   '#7c5fe6'],
+  ['tolerant',               'Tolerant',                '#4f8ef7'],
+  ['moderately_susceptible', 'Moderately Susceptible',  '#fbbf24'],
+  ['susceptible',            'Susceptible',              '#f87171'],
+];
+
+function renderPestDisease(pdr) {
+  if (!pdr || typeof pdr !== 'object') return '';
+  let rows = '';
+  for (const [key, label, color] of PDR_LEVELS) {
+    const items = pdr[key];
+    if (Array.isArray(items) && items.length) {
+      const badges = items.map((i) =>
+        `<span style="background:${color}22;color:${color};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-right:4px;display:inline-block;margin-bottom:2px">${esc(titleCase(i))}</span>`
+      ).join('');
+      rows += `<tr><td>${esc(label)}</td><td>${badges}</td></tr>`;
+    }
+  }
+  if (pdr.overall) {
+    rows += `<tr><td>Overall Rating</td><td>${esc(titleCase(pdr.overall))}</td></tr>`;
+  }
+  if (!rows) {
+    rows = `<tr><td>Pest &amp; Disease Resistance</td><td>—</td></tr>`;
+  }
+  return rows;
+}
+
+function renderDetail(d) {
+  const seasons = (d.season || []).map(s => `<span class="sbadge">${esc(s)}</span>`).join(' ');
+
+  let h = `
+    <div class="d-name">${esc(d.denomination || '—')}</div>
+    <div class="d-sub">${esc(d.crop_name||'')}${d.scientific_name?' · '+esc(d.scientific_name):''}</div>
+
+    <div class="sec-title">Identity</div>
+    ${frow('Registration No.', d.reg_no)}
+    ${frow('Category', d.category)}
+    ${frow('Variety Type', d.variety_type)}
+    ${frow('Classification', d.classification)}
+
+    <div class="sec-title">Agronomic Profile</div>
+    <div class="frow"><span class="fkey">Season</span><span class="fval">${seasons||'—'}</span></div>
+    ${frow('Maturity', d.maturity)}
+    ${frow('Irrigation', d.irrigation)}
+    ${frow('Soil Fertility', d.soil_fertility)}
+    ${frow('States', d.states_normalized || d.states)}
+    ${frow('Districts', d.districts && d.districts.length ? d.districts : null)}
+
+    <div class="sec-title">Applicant</div>
+    ${frow('Name', d.applicant)}
+    <div class="frow"><span class="fkey">Type</span><span class="fval">${
+      d.applicant_is_human === true  ? '<span style="background:rgba(52,211,153,0.15);color:#34d399;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">Individual</span>' :
+      d.applicant_is_human === false ? '<span style="background:rgba(248,113,113,0.15);color:#f87171;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">Organization</span>' : '—'
+    }</span></div>
+    ${frow('Address', d.applicant_address)}
+    ${frow('State', d.applicant_state)}
+    ${frow('District', d.applicant_district)}
+
+    <div class="sec-title">Dates &amp; References</div>
+    ${frow('Filed', d.filing_date)}
+    ${frow('Accepted', d.acceptance_date)}
+    ${frow('Commercialized', d.commercialization_date)}
+    ${frow('Reference Varieties', d.ref_varieties)}
+    ${frow('Source PDF', d.source_pdf)}
+  `;
+
+  // Agronomic Attributes
+  const agro = d.agronomic_attributes || {};
+  if (Object.keys(agro).length) {
+    h += `<div class="sec-title">Agronomic &amp; Commercial Attributes</div><table class="dus-tbl">`;
+    Object.entries(agro).forEach(([k, v]) => {
+      if (v === null || v === undefined) return;
+      if (k === 'pest_disease_resistance') {
+        h += renderPestDisease(v);
+        return;
+      }
+      if (k === 'notes' || k === 'ipm_schedule') {
+        h += `<tr><td>${esc(formatAgroLabel(k))}</td><td>${esc(String(v))}</td></tr>`;
+        return;
+      }
+      const val = formatAgroValue(k, v);
+      if (val === null) return;
+      h += `<tr><td>${esc(formatAgroLabel(k))}</td><td>${esc(val)}</td></tr>`;
+    });
+    h += `</table>`;
+  }
+
+  // DUS Grouping Characteristics
+  const grp = d.dus_grouping || {};
+  if (Object.keys(grp).length) {
+    h += `<div class="sec-title">DUS — Grouping Characteristics</div><table class="dus-tbl">`;
+    Object.entries(grp).forEach(([k, v]) => {
+      if (v !== null && v !== undefined)
+        h += `<tr><td>${esc(k.replace(/_/g,' '))}</td><td>${esc(v)}</td></tr>`;
+    });
+    h += `</table>`;
+  }
+
+  // DUS Candidate
+  const cand = d.dus_candidate || {};
+  if (Object.keys(cand).length) {
+    h += `<div class="sec-title">DUS — Candidate Characteristics</div><table class="dus-tbl">`;
+    Object.entries(cand).forEach(([k, v]) => {
+      if (v !== null && v !== undefined)
+        h += `<tr><td>${esc(k.replace(/_/g,' '))}</td><td>${esc(v)}</td></tr>`;
+    });
+    h += `</table>`;
+  }
+
+  // DUS Reference
+  const refs = d.dus_reference || [];
+  if (refs.length) {
+    h += `<div class="sec-title">DUS — Reference Varieties</div>`;
+    refs.forEach(r => {
+      h += `<div class="ref-name">▸ ${esc(r.name)}</div><table class="dus-tbl">`;
+      Object.entries(r.characteristics || {}).forEach(([k, v]) => {
+        h += `<tr><td>${esc(k.replace(/_/g,' '))}</td><td>${esc(v)}</td></tr>`;
+      });
+      h += `</table>`;
+    });
+  }
+
+  document.getElementById('detail-content').innerHTML = h;
+}
+
+// ── Load filter pill buttons ──────────────────────────────────────────────────
+async function loadMeta() {
+  try {
+    const res  = await fetch('/api/meta');
+    const meta = await res.json();
+
+    const populate = (id, values, group) => {
+      const container = document.getElementById(id);
+      (values || []).forEach(v => {
+        const btn = document.createElement('button');
+        btn.className = 'pill';
+        btn.dataset.value = v;
+        btn.textContent = v.replace('.pdf', '');
+        btn.onclick = () => pillClick(container, v);
+        container.appendChild(btn);
+      });
+    };
+
+    populate('f-source_pdf',     meta.source_pdf,     'source_pdf');
+    populate('f-category',       meta.category,       'category');
+    populate('f-variety_type',   meta.variety_type,   'variety_type');
+    populate('f-classification', meta.classification, 'classification');
+    populate('f-season',         meta.season,         'season');
+    populate('f-irrigation',     meta.irrigation,     'irrigation');
+    populate('f-maturity',       meta.maturity,       'maturity');
+    populate('f-state',          meta.states,         'state');
+
+    document.getElementById('result-count').textContent =
+      `${(meta.total||0).toLocaleString()} records total`;
+  } catch(e) {
+    console.error('Failed to load meta:', e);
+  }
+}
+
+// ── Search debounce ───────────────────────────────────────────────────────────
+document.getElementById('search').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { page = 1; load(); }, 350);
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadMeta().then(() => load());
+
+// ── View switching ────────────────────────────────────────────────────────────
+let currentView = 'table';
+
+function switchView(view) {
+  currentView = view;
+  document.getElementById('tab-table').classList.toggle('active', view === 'table');
+  document.getElementById('tab-map').classList.toggle('active', view === 'map');
+  document.getElementById('table-wrap').style.display  = view === 'table' ? 'flex'  : 'none';
+  document.getElementById('pagination').style.display  = view === 'table' ? 'flex'  : 'none';
+  document.getElementById('map-wrap').style.display    = view === 'map'   ? 'block' : 'none';
+  if (view === 'map') loadMap();
+}
+
+// ── Leaflet map ───────────────────────────────────────────────────────────────
+let _map         = null;
+let _appCluster  = null;
+let _suitCluster = null;
+let _mapInitPromise = null;
+
+function ensureMapInit() {
+  if (!_mapInitPromise) _mapInitPromise = _doInitMap();
+  return _mapInitPromise;
+}
+
+async function _doInitMap() {
+  const INDIA_BOUNDS = [[5.5, 67.5], [37.5, 98.5]];
+
+  _map = L.map('map', {
+    zoomControl:          true,
+    maxBounds:            INDIA_BOUNDS,
+    maxBoundsViscosity:   1.0,
+    minZoom:              4,
+  }).setView([22.5, 82.5], 5);
+
+  // Light CartoDB Positron base tiles
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a> © <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd', maxZoom: 19,
+  }).addTo(_map);
+
+  // Prepare cluster groups (added to map after overlay layers so they render on top)
+  _appCluster  = L.markerClusterGroup({ maxClusterRadius: 40, showCoverageOnHover: false });
+  _suitCluster = L.markerClusterGroup({ maxClusterRadius: 40, showCoverageOnHover: false });
+
+  // India state boundaries + outside-India mask
+  try {
+    const res    = await fetch('/api/geodata/states');
+    const statesGj = await res.json();
+
+    // State border lines — thin slate-gray, no fill
+    L.geoJSON(statesGj, {
+      interactive: false,
+      style: { color: '#94a3b8', weight: 0.7, fillOpacity: 0 },
+    }).addTo(_map);
+
+    // Build India union polygon with turf, then mask the rest of the world
+    let india = statesGj.features[0];
+    for (let i = 1; i < statesGj.features.length; i++) {
+      try { india = turf.union(india, statesGj.features[i]); } catch(_) {}
+    }
+    const mask = turf.mask(india);
+    L.geoJSON(mask, {
+      interactive: false,
+      style: { fillColor: '#f8f9fb', fillOpacity: 0.82, stroke: false },
+    }).addTo(_map);
+  } catch(e) {
+    console.warn('State boundary overlay failed:', e);
+  }
+
+  // Add clusters on top of all overlay layers
+  _map.addLayer(_appCluster);
+  _map.addLayer(_suitCluster);
+}
+
+const CAT_COLORS = {
+  Cereal: '#d97706', Oilseed: '#dc2626', Pulse: '#059669',
+  Vegetable: '#0891b2', Fruit: '#ea580c', Flower: '#9333ea',
+  Spice: '#7c3aed', Fiber: '#64748b', Timber: '#92400e',
+  'Cash Crop': '#047857', Medicinal: '#16a34a', Forage: '#65a30d',
+};
+function catColor(cat) { return CAT_COLORS[cat] || '#475569'; }
+
+// Pick most-granular available point for applicant
+function bestApplicantPoint(ag) {
+  if (!ag) return null;
+  if (ag.district_point?.coordinates) return { pt: ag.district_point, label: `${ag.district}, ${ag.state}`, precision: 'district' };
+  if (ag.state_point?.coordinates)    return { pt: ag.state_point,    label: ag.state || ag.raw_state, precision: 'state' };
+  return null;
+}
+
+// Build suitability point list, preferring district entries over state entries
+function suitabilityPoints(d) {
+  const pts = [];
+  const coveredRaw = new Set();
+
+  // First pass: district-level entries (most granular)
+  (d.suitability_districts || []).forEach(e => {
+    if (!e.point?.coordinates) return;
+    pts.push({ pt: e.point, label: `${e.district}, ${e.state}`, context: 'Suitability (district)' });
+    coveredRaw.add((e.raw || '').toLowerCase());
+  });
+
+  // Second pass: state-level entries not already covered by a district pin
+  (d.suitability_states || []).forEach(s => {
+    if (!s.point?.coordinates) return;
+    // Skip if a district entry already covers this state entry
+    const rawKey = (s.raw || '').toLowerCase();
+    if (coveredRaw.has(rawKey)) return;
+    pts.push({ pt: s.point, label: s.name || s.raw, context: 'Suitability (state)' });
+  });
+
+  return pts;
+}
+
+async function loadMap() {
+  const status = document.getElementById('map-status');
+  status.textContent = 'Initialising map…';
+
+  await ensureMapInit();
+
+  status.textContent = 'Loading pins…';
+  _appCluster.clearLayers();
+  _suitCluster.clearLayers();
+
+  let data;
+  try {
+    const f = getFilters();
+    const p = new URLSearchParams();
+    if (f.search) p.set('search', f.search);
+    Object.entries(filterState).forEach(([key, set]) => {
+      set.forEach(v => p.append(key, v));
+    });
+    const res = await fetch(`/api/locations?${p.toString()}`);
+    data = await res.json();
+  } catch(e) {
+    status.textContent = '⚠ Failed to load locations';
+    return;
+  }
+
+  if (!data.length) {
+    status.textContent = 'No geo data for current filters';
+    return;
+  }
+
+  let appCount = 0, suitCount = 0;
+
+  data.forEach(d => {
+    const color = catColor(d.category);
+
+    // ── Applicant marker — blue, most granular point, click → detail panel ────
+    const ap = bestApplicantPoint(d.applicant_geo);
+    if (ap) {
+      const [lon, lat] = ap.pt.coordinates;
+      const m = L.circleMarker([lat, lon], {
+        radius: 7, fillColor: '#3b82f6', color: '#1d4ed8',
+        weight: 1.5, fillOpacity: 0.9,
+      });
+      m.on('click', () => openDetail(d._id));
+      _appCluster.addLayer(m);
+      appCount++;
+    }
+
+    // ── Suitability markers — category color, click → same detail panel ───────
+    suitabilityPoints(d).forEach(sp => {
+      const [lon, lat] = sp.pt.coordinates;
+      const m = L.circleMarker([lat, lon], {
+        radius: 6, fillColor: color, color: '#fff',
+        weight: 1, fillOpacity: 0.75,
+      });
+      m.on('click', () => openDetail(d._id));
+      _suitCluster.addLayer(m);
+      suitCount++;
+    });
+  });
+
+  status.textContent = `${data.length} varieties · ${appCount} applicant · ${suitCount} suitability`;
+
+  setTimeout(() => _map.invalidateSize(), 50);
+}
+</script>
+</body>
+</html>
