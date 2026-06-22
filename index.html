@@ -277,7 +277,7 @@ tr.row.active td { border-bottom-color: rgba(79,142,247,0.2); }
     <div class="pill-group" id="f-category" data-group="category"></div>
 
     <div class="filter-label">Crop</div>
-    <div class="pill-group scrollable" id="f-crop_name" data-group="crop_name"></div>
+    <div class="pill-group" id="f-crop_name" data-group="crop_name"></div>
 
     <div class="filter-label">Variety Type</div>
     <div class="pill-group" id="f-variety_type" data-group="variety_type"></div>
@@ -796,7 +796,8 @@ function renderDetail(d) {
 // ── Load filter pill buttons ──────────────────────────────────────────────────
 async function loadMeta() {
   try {
-    const res  = await fetch('/api/meta');
+    const res = await fetch('/api/meta');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const meta = await res.json();
 
     const populate = (id, values, group) => {
@@ -825,6 +826,12 @@ async function loadMeta() {
       `${(meta.total||0).toLocaleString()} records total`;
   } catch(e) {
     console.error('Failed to load meta:', e);
+    document.getElementById('sidebar').insertAdjacentHTML('afterbegin',
+      `<div style="background:rgba(248,113,113,0.12);border:1px solid var(--rose);border-radius:7px;padding:10px 12px;font-size:11px;color:var(--rose);margin-bottom:12px">
+        ⚠ Filters unavailable — API error.<br>
+        <span style="color:var(--muted)">${esc(e.message)}</span>
+      </div>`
+    );
   }
 }
 
