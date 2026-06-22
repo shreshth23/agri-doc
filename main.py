@@ -176,14 +176,18 @@ def serve_index():
 @app.get("/api/meta", summary="Filter options + total count")
 def get_meta() -> dict:
     require_db()
+
+    def distinct_strings(field: str) -> list[str]:
+        return sorted(v for v in _col.distinct(field) if isinstance(v, str))
+
     meta: dict = {}
     for field in ("category", "crop_name", "variety_type", "classification",
                   "maturity", "irrigation", "source_pdf"):
-        meta[field] = sorted(v for v in _col.distinct(field) if v is not None)
-    meta["season"] = sorted(v for v in _col.distinct("season") if v is not None)
+        meta[field] = distinct_strings(field)
+    meta["season"] = distinct_strings("season")
     # states_normalized is the cleaned ~32-value domain (see tools/normalize_states_mongo.py) —
     # the raw "states" field still holds whatever variant spelling/zone-label text was extracted.
-    meta["states"] = sorted(v for v in _col.distinct("states_normalized") if v is not None)
+    meta["states"] = distinct_strings("states_normalized")
     meta["total"]  = _col.count_documents({})
     return meta
 
