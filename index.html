@@ -97,6 +97,8 @@ body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--tex
 .pill-group[data-group="season"] .pill.active { background: rgba(34,211,238,0.15); border-color: #22d3ee; color: #22d3ee; }
 .pill-group[data-group="irrigation"] .pill.active { background: rgba(79,142,247,0.18); border-color: var(--accent); color: var(--accent); }
 .pill-group[data-group="maturity"] .pill.active { background: rgba(248,113,113,0.15); border-color: var(--rose); color: var(--rose); }
+.pill-group[data-group="crop_name"] .pill.active { background: rgba(180,120,60,0.18); border-color: #b47c3c; color: #e8a44c; }
+.pill-group.scrollable { max-height: 130px; overflow-y: auto; }
 .btn-clear {
   margin-top: 14px; width: 100%; padding: 7px; border: 1px solid var(--border2);
   border-radius: 7px; background: transparent; font-size: 11px; cursor: pointer;
@@ -274,6 +276,9 @@ tr.row.active td { border-bottom-color: rgba(79,142,247,0.2); }
     <div class="filter-label">Category</div>
     <div class="pill-group" id="f-category" data-group="category"></div>
 
+    <div class="filter-label">Crop</div>
+    <div class="pill-group scrollable" id="f-crop_name" data-group="crop_name"></div>
+
     <div class="filter-label">Variety Type</div>
     <div class="pill-group" id="f-variety_type" data-group="variety_type"></div>
 
@@ -312,13 +317,11 @@ tr.row.active td { border-bottom-color: rgba(79,142,247,0.2); }
           <tr>
             <th class="sortable" data-sort="denomination" onclick="toggleSort(this)">Denomination <span class="sort-icon">↕</span></th>
             <th class="sortable" data-sort="category" onclick="toggleSort(this)">Category <span class="sort-icon">↕</span></th>
-            <th class="sortable" data-sort="variety_type" onclick="toggleSort(this)">Type <span class="sort-icon">↕</span></th>
-            <th class="sortable" data-sort="classification" onclick="toggleSort(this)">Class <span class="sort-icon">↕</span></th>
             <th>Season</th>
-            <th class="sortable" data-sort="maturity" onclick="toggleSort(this)">Maturity <span class="sort-icon">↕</span></th>
+            <th class="sortable" data-sort="irrigation" onclick="toggleSort(this)">Irrigation <span class="sort-icon">↕</span></th>
+            <th>Stress Tolerance</th>
+            <th>Disease</th>
             <th>States</th>
-            <th class="sortable" data-sort="filing_date" onclick="toggleSort(this)">Filed <span class="sort-icon">↕</span></th>
-            <th class="sortable" data-sort="source_pdf" onclick="toggleSort(this)">Source <span class="sort-icon">↕</span></th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -364,9 +367,10 @@ let sortField = 'denomination', sortOrder = 'asc';
 // ── Filter state (pill buttons) ───────────────────────────────────────────────
 // Each filter group stores a Set of selected values (empty = no filter)
 const filterState = {
-  source_pdf: new Set(), category: new Set(), variety_type: new Set(),
-  classification: new Set(), season: new Set(), irrigation: new Set(),
-  maturity: new Set(), applicant_type: new Set(), state: new Set()
+  source_pdf: new Set(), category: new Set(), crop_name: new Set(),
+  variety_type: new Set(), classification: new Set(), season: new Set(),
+  irrigation: new Set(), maturity: new Set(), applicant_type: new Set(),
+  state: new Set()
 };
 
 function pillClick(groupEl, value) {
@@ -472,6 +476,55 @@ function chipClass(cat) {
   return 'chip chip-' + (map[cat] || 'Other');
 }
 
+const TOLERANCE_LABELS = [
+  ['tolerance_temperature', 'Temp'],
+  ['tolerance_heat',        'Heat'],
+  ['tolerance_frost',       'Frost'],
+  ['tolerance_drought',     'Drought'],
+  ['tolerance_salinity',    'Salinity'],
+  ['tolerance_water_stagnation', 'Water'],
+];
+const TOLERANCE_COLORS = { tolerant: '#34d399', moderate: '#fbbf24', sensitive: '#f87171' };
+
+function renderStress(agro) {
+  if (!agro) return '<span style="color:var(--muted)">—</span>';
+  const badges = TOLERANCE_LABELS
+    .filter(([k]) => agro[k])
+    .map(([k, label]) => {
+      const v = agro[k];
+      const c = TOLERANCE_COLORS[v] || 'var(--muted)';
+      return `<span style="background:${c}22;color:${c};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;white-space:nowrap">${esc(label)}</span>`;
+    });
+  return badges.length
+    ? `<div style="display:flex;flex-wrap:wrap;gap:3px">${badges.join('')}</div>`
+    : '<span style="color:var(--muted)">—</span>';
+}
+
+function renderDisease(agro) {
+  const pdr = agro?.pest_disease_resistance;
+  if (!pdr) return '<span style="color:var(--muted)">—</span>';
+
+  const all = [
+    ...(pdr.resistant            || []),
+    ...(pdr.moderately_resistant || []),
+    ...(pdr.tolerant             || []),
+    ...(pdr.moderately_susceptible || []),
+    ...(pdr.susceptible          || []),
+  ];
+
+  if (!all.length) return '<span style="color:var(--muted)">—</span>';
+
+  const MAX = 3;
+  const badges = all.slice(0, MAX).map(name =>
+    `<span style="background:rgba(79,142,247,0.12);color:var(--accent);padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500;white-space:nowrap">${esc(titleCase(name))}</span>`
+  ).join('');
+  const extra = all.length > MAX
+    ? `<span style="color:var(--muted);font-size:10px;white-space:nowrap">+${all.length - MAX}</span>`
+    : '';
+
+  return `<div style="display:flex;flex-wrap:wrap;gap:3px;align-items:center">${badges}${extra}</div>`;
+}
+
 function renderRows(rows) {
   const tbody = document.getElementById('tbody');
   rows.forEach(r => {
@@ -484,6 +537,8 @@ function renderRows(rows) {
       const s = r.states_normalized || r.states || [];
       return s.length ? s.slice(0,2).join(', ') + (s.length > 2 ? ` +${s.length-2}` : '') : '—';
     })();
+    const agro = r.agronomic_attributes || null;
+    const irrLabel = r.irrigation || '—';
 
     tr.innerHTML = `
       <td>
@@ -491,13 +546,11 @@ function renderRows(rows) {
         <div class="crop">${esc(r.crop_name || '')}${r.scientific_name ? ' · <i>'+esc(r.scientific_name)+'</i>' : ''}</div>
       </td>
       <td><span class="${chipClass(r.category)}">${esc(r.category || '—')}</span></td>
-      <td><span class="tag-vt">${esc(r.variety_type || '—')}</span></td>
-      <td>${esc(r.classification || '—')}</td>
       <td><div class="season-badges">${seasons || '—'}</div></td>
-      <td>${esc(r.maturity || '—')}</td>
+      <td><span class="tag-vt">${esc(irrLabel)}</span></td>
+      <td>${renderStress(agro)}</td>
+      <td>${renderDisease(agro)}</td>
       <td class="states-cell">${esc(statesTxt)}</td>
-      <td style="white-space:nowrap;color:var(--muted)">${esc(r.filing_date || '—')}</td>
-      <td style="color:var(--muted);font-size:11px">${esc((r.source_pdf||'').replace('.pdf',''))}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -760,6 +813,7 @@ async function loadMeta() {
 
     populate('f-source_pdf',     meta.source_pdf,     'source_pdf');
     populate('f-category',       meta.category,       'category');
+    populate('f-crop_name',      meta.crop_name,      'crop_name');
     populate('f-variety_type',   meta.variety_type,   'variety_type');
     populate('f-classification', meta.classification, 'classification');
     populate('f-season',         meta.season,         'season');

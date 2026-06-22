@@ -30,12 +30,13 @@ GEODATA    = HERE.parent.parent / "geodata"
 
 SORTABLE_FIELDS = {
     "denomination", "crop_name", "category", "variety_type",
-    "classification", "maturity", "filing_date", "source_pdf",
+    "classification", "maturity", "irrigation", "filing_date", "source_pdf",
 }
 
 LIST_PROJ = {
-    "dus_grouping": 0, "dus_candidate": 0,
-    "dus_reference": 0, "agronomic_attributes": 0,
+    "dus_grouping": 0, "dus_candidate": 0, "dus_reference": 0,
+    "agronomic_attributes.ipm_schedule": 0,
+    "agronomic_attributes.notes": 0,
 }
 
 # ── MongoDB lifespan ──────────────────────────────────────────────────────────
@@ -101,6 +102,7 @@ class VarietyListResponse(BaseModel):
 def build_query(
     search: str,
     category: list[str],
+    crop_name: list[str],
     variety_type: list[str],
     classification: list[str],
     maturity: list[str],
@@ -123,6 +125,7 @@ def build_query(
 
     for field, vals in [
         ("category",       category),
+        ("crop_name",      crop_name),
         ("variety_type",   variety_type),
         ("classification", classification),
         ("maturity",       maturity),
@@ -161,7 +164,7 @@ def serve_index():
 @app.get("/api/meta", summary="Filter options + total count")
 def get_meta() -> dict:
     meta: dict = {}
-    for field in ("category", "variety_type", "classification",
+    for field in ("category", "crop_name", "variety_type", "classification",
                   "maturity", "irrigation", "source_pdf"):
         meta[field] = sorted(v for v in _col.distinct(field) if v is not None)
     meta["season"] = sorted(v for v in _col.distinct("season") if v is not None)
@@ -197,6 +200,7 @@ def list_varieties(
     order:          Annotated[str,        Query()]              = "asc",
     search:         Annotated[str,        Query()]              = "",
     category:       Annotated[list[str],  Query()]              = [],
+    crop_name:      Annotated[list[str],  Query()]              = [],
     variety_type:   Annotated[list[str],  Query()]              = [],
     classification: Annotated[list[str],  Query()]              = [],
     maturity:       Annotated[list[str],  Query()]              = [],
@@ -209,7 +213,7 @@ def list_varieties(
     sort_field = sort if sort in SORTABLE_FIELDS else "denomination"
     direction  = ASCENDING if order == "asc" else DESCENDING
 
-    q     = build_query(search, category, variety_type, classification,
+    q     = build_query(search, category, crop_name, variety_type, classification,
                         maturity, irrigation, source_pdf, season, state, applicant_type)
     total = _col.count_documents(q)
     docs  = list(
@@ -245,6 +249,7 @@ def get_states_geojson():
 def get_locations(
     search:         Annotated[str,        Query()] = "",
     category:       Annotated[list[str],  Query()] = [],
+    crop_name:      Annotated[list[str],  Query()] = [],
     variety_type:   Annotated[list[str],  Query()] = [],
     classification: Annotated[list[str],  Query()] = [],
     maturity:       Annotated[list[str],  Query()] = [],
@@ -259,7 +264,7 @@ def get_locations(
     Joins varieties → locations. Used by the map tab.
     Capped at 1000 records for map performance.
     """
-    q = build_query(search, category, variety_type, classification,
+    q = build_query(search, category, crop_name, variety_type, classification,
                     maturity, irrigation, source_pdf, season, state, applicant_type)
 
     variety_proj = {"_id": 1, "denomination": 1, "crop_name": 1,
