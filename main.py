@@ -43,10 +43,13 @@ LIST_PROJ = {
 _col     = None
 _loc_col = None
 
+_db_error: str | None = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _col, _loc_col
+    global _col, _loc_col, _db_error
     safe_uri = re.sub(r"://([^:]+):[^@]+@", r"://\1:***@", MONGO_URI)
+    client = None
     try:
         kwargs: dict = {"serverSelectionTimeoutMS": 8000}
         if MONGO_URI.startswith("mongodb+srv"):
@@ -57,12 +60,13 @@ async def lifespan(app: FastAPI):
         _col     = client[DB_NAME][COLLECTION]
         _loc_col = client[DB_NAME]["locations"]
         print(f"MongoDB connected  →  {safe_uri}  |  {DB_NAME}.{COLLECTION}")
-    except ConnectionFailure:
-        print(f"ERROR: Cannot connect to MongoDB at {safe_uri}")
-        raise
+    except Exception as exc:
+        _db_error = f"Cannot connect to MongoDB ({safe_uri}): {exc}"
+        print(f"ERROR: {_db_error}")
     yield
-    client.close()
-    print("MongoDB disconnected.")
+    if client:
+        client.close()
+        print("MongoDB disconnected.")
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -155,6 +159,14 @@ def build_query(
     return q
 
 
+# ── DB guard ──────────────────────────────────────────────────────────────────
+def require_db():
+    if _col is None:
+        raise HTTPException(
+            status_code=503,
+            detail=_db_error or "Database not connected. Set the MONGO_URI environment variable.",
+        )
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.get("/", include_in_schema=False)
 def serve_index():
@@ -163,6 +175,7 @@ def serve_index():
 
 @app.get("/api/meta", summary="Filter options + total count")
 def get_meta() -> dict:
+    require_db()
     meta: dict = {}
     for field in ("category", "crop_name", "variety_type", "classification",
                   "maturity", "irrigation", "source_pdf"):
@@ -177,6 +190,7 @@ def get_meta() -> dict:
 
 @app.get("/api/stats", response_model=StatsResponse, summary="Dashboard stats")
 def get_stats() -> StatsResponse:
+    require_db()
     by_category = list(_col.aggregate([
         {"$group": {"_id": "$category",     "count": {"$sum": 1}}},
         {"$sort":  {"count": -1}},
@@ -210,6 +224,7 @@ def list_varieties(
     state:          Annotated[list[str],  Query()]              = [],
     applicant_type: Annotated[list[str],  Query()]              = [],
 ) -> VarietyListResponse:
+    require_db()
     sort_field = sort if sort in SORTABLE_FIELDS else "denomination"
     direction  = ASCENDING if order == "asc" else DESCENDING
 
@@ -230,6 +245,7 @@ def list_varieties(
 
 @app.get("/api/variety/{variety_id}", summary="Full variety detail")
 def get_variety(variety_id: str) -> dict:
+    require_db()
     doc = _col.find_one({"_id": variety_id})
     if not doc:
         raise HTTPException(status_code=404, detail=f"Variety '{variety_id}' not found")
@@ -264,6 +280,7 @@ def get_locations(
     Joins varieties → locations. Used by the map tab.
     Capped at 1000 records for map performance.
     """
+    require_db()
     q = build_query(search, category, crop_name, variety_type, classification,
                     maturity, irrigation, source_pdf, season, state, applicant_type)
 

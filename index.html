@@ -797,7 +797,11 @@ function renderDetail(d) {
 async function loadMeta() {
   try {
     const res = await fetch('/api/meta');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try { const j = await res.json(); if (j.detail) detail = j.detail; } catch(_) {}
+      throw new Error(detail);
+    }
     const meta = await res.json();
 
     const populate = (id, values, group) => {
@@ -828,8 +832,8 @@ async function loadMeta() {
     console.error('Failed to load meta:', e);
     document.getElementById('sidebar').insertAdjacentHTML('afterbegin',
       `<div style="background:rgba(248,113,113,0.12);border:1px solid var(--rose);border-radius:7px;padding:10px 12px;font-size:11px;color:var(--rose);margin-bottom:12px">
-        ⚠ Filters unavailable — API error.<br>
-        <span style="color:var(--muted)">${esc(e.message)}</span>
+        ⚠ Cannot reach database.<br>
+        <span style="color:var(--muted);font-size:10px">${esc(e.message)}</span>
       </div>`
     );
   }
