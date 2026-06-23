@@ -26,12 +26,16 @@ DB_NAME    = "agri_db"
 COLLECTION = "varieties"
 PORT       = int(os.environ.get("PORT", 8000))
 HERE       = Path(__file__).parent
-GEODATA    = HERE.parent.parent / "geodata"
 
 SORTABLE_FIELDS = {
     "denomination", "crop_name", "category", "variety_type",
     "classification", "maturity", "irrigation", "filing_date", "source_pdf",
 }
+
+TOLERANCE_KEYS = {
+    "heat", "frost", "drought", "salinity", "water_stagnation", "temperature",
+}
+
 
 LIST_PROJ = {
     "dus_grouping": 0, "dus_candidate": 0, "dus_reference": 0,
@@ -115,6 +119,7 @@ def build_query(
     season: list[str],
     state: list[str],
     applicant_type: list[str],
+    tolerance: list[str],
 ) -> dict:
     q: dict = {}
 
@@ -156,6 +161,13 @@ def build_query(
     elif at == {"organization"}:
         q["applicant_is_human"] = False
 
+    # Tolerance: each item is "type:level" e.g. "heat:tolerant"
+    for t in tolerance:
+        if ":" in t:
+            tkey, level = t.split(":", 1)
+            if tkey in TOLERANCE_KEYS and level:
+                q[f"agronomic_attributes.tolerance_{tkey}"] = level
+
     return q
 
 
@@ -185,10 +197,10 @@ def get_meta() -> dict:
                   "maturity", "irrigation", "source_pdf"):
         meta[field] = distinct_strings(field)
     meta["season"] = distinct_strings("season")
-    # states_normalized is the cleaned ~32-value domain (see tools/normalize_states_mongo.py) —
-    # the raw "states" field still holds whatever variant spelling/zone-label text was extracted.
-    meta["states"] = distinct_strings("states_normalized")
-    meta["total"]  = _col.count_documents({})
+    # Prefer the normalized field; fall back to raw states array if it's empty
+    states = distinct_strings("states_normalized")
+    meta["states"] = states if states else distinct_strings("states")
+    meta["total"]    = _col.count_documents({})
     return meta
 
 
@@ -227,13 +239,15 @@ def list_varieties(
     season:         Annotated[list[str],  Query()]              = [],
     state:          Annotated[list[str],  Query()]              = [],
     applicant_type: Annotated[list[str],  Query()]              = [],
+    tolerance:      Annotated[list[str],  Query()]              = [],
 ) -> VarietyListResponse:
     require_db()
     sort_field = sort if sort in SORTABLE_FIELDS else "denomination"
     direction  = ASCENDING if order == "asc" else DESCENDING
 
     q     = build_query(search, category, crop_name, variety_type, classification,
-                        maturity, irrigation, source_pdf, season, state, applicant_type)
+                        maturity, irrigation, source_pdf, season, state, applicant_type,
+                        tolerance)
     total = _col.count_documents(q)
     docs  = list(
         _col.find(q, LIST_PROJ)
@@ -257,14 +271,6 @@ def get_variety(variety_id: str) -> dict:
     return doc
 
 
-@app.get("/api/geodata/states", summary="GADM L1 state boundaries GeoJSON for India map overlay")
-def get_states_geojson():
-    p = GEODATA / "gadm41_IND_1.json"
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="gadm41_IND_1.json not found in geodata/")
-    return FileResponse(p, media_type="application/json")
-
-
 @app.get("/api/locations", summary="Geo points for map view (respects active filters)")
 def get_locations(
     search:         Annotated[str,        Query()] = "",
@@ -278,6 +284,7 @@ def get_locations(
     season:         Annotated[list[str],  Query()] = [],
     state:          Annotated[list[str],  Query()] = [],
     applicant_type: Annotated[list[str],  Query()] = [],
+    tolerance:      Annotated[list[str],  Query()] = [],
 ) -> list[dict]:
     """
     Returns geo data for the filtered variety set.
@@ -286,7 +293,8 @@ def get_locations(
     """
     require_db()
     q = build_query(search, category, crop_name, variety_type, classification,
-                    maturity, irrigation, source_pdf, season, state, applicant_type)
+                    maturity, irrigation, source_pdf, season, state, applicant_type,
+                    tolerance)
 
     variety_proj = {"_id": 1, "denomination": 1, "crop_name": 1,
                     "category": 1, "applicant": 1, "applicant_is_human": 1}

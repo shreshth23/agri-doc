@@ -10,7 +10,6 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
-<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
 <style>
 :root {
   --bg: #0d0f14;
@@ -97,7 +96,8 @@ body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--tex
 .pill-group[data-group="season"] .pill.active { background: rgba(34,211,238,0.15); border-color: #22d3ee; color: #22d3ee; }
 .pill-group[data-group="irrigation"] .pill.active { background: rgba(79,142,247,0.18); border-color: var(--accent); color: var(--accent); }
 .pill-group[data-group="maturity"] .pill.active { background: rgba(248,113,113,0.15); border-color: var(--rose); color: var(--rose); }
-.pill-group[data-group="crop_name"] .pill.active { background: rgba(180,120,60,0.18); border-color: #b47c3c; color: #e8a44c; }
+.pill-group[data-group="crop_name"]  .pill.active { background: rgba(180,120,60,0.18);  border-color: #b47c3c; color: #e8a44c; }
+/* tolerance pills use inline styles per-level — no static active rule needed */
 .pill-group.scrollable { max-height: 130px; overflow-y: auto; }
 .btn-clear {
   margin-top: 14px; width: 100%; padding: 7px; border: 1px solid var(--border2);
@@ -235,7 +235,8 @@ tr.row.active td { border-bottom-color: rgba(79,142,247,0.2); }
 }
 #map-legend .leg-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
 #map-legend .leg-row:last-child { margin-bottom: 0; }
-.leg-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.leg-dot    { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.leg-swatch { width: 20px; height: 11px; border-radius: 2px; flex-shrink: 0; }
 #map-status {
   position: absolute; bottom: 36px; right: 16px; z-index: 1000;
   background: rgba(255,255,255,0.93); border: 1px solid #cdd5e0;
@@ -303,6 +304,16 @@ tr.row.active td { border-bottom-color: rgba(79,142,247,0.2); }
     <div class="filter-label">State</div>
     <div class="pill-group" id="f-state" data-group="state"></div>
 
+    <div class="filter-label">Stress Tolerance</div>
+    <div class="pill-group" id="f-tolerance" data-group="tolerance">
+      <button class="pill" data-label="Heat"    data-value="heat"             onclick="toleranceCycle(this,'heat')">Heat</button>
+      <button class="pill" data-label="Frost"   data-value="frost"            onclick="toleranceCycle(this,'frost')">Frost</button>
+      <button class="pill" data-label="Drought" data-value="drought"          onclick="toleranceCycle(this,'drought')">Drought</button>
+      <button class="pill" data-label="Salinity" data-value="salinity"        onclick="toleranceCycle(this,'salinity')">Salinity</button>
+      <button class="pill" data-label="Water"   data-value="water_stagnation" onclick="toleranceCycle(this,'water_stagnation')">Water</button>
+      <button class="pill" data-label="Temp"    data-value="temperature"      onclick="toleranceCycle(this,'temperature')">Temp</button>
+    </div>
+
     <button class="btn-clear" onclick="clearFilters()">✕ Clear All</button>
   </div>
 
@@ -338,8 +349,10 @@ tr.row.active td { border-bottom-color: rgba(79,142,247,0.2); }
     <div id="map-wrap">
       <div id="map"></div>
       <div id="map-legend">
-        <div class="leg-row"><div class="leg-dot" style="background:#4f8ef7"></div><span>Applicant location</span></div>
-        <div class="leg-row"><div class="leg-dot" style="background:#fbbf24"></div><span>Suitability region</span></div>
+        <div class="leg-row"><div class="leg-dot" style="background:#3b82f6;border:2px solid #1d4ed8"></div><span>Village (point)</span></div>
+        <div class="leg-row"><div class="leg-swatch" style="background:rgba(59,130,246,0.18);border:2px solid #3b82f6"></div><span>Tehsil boundary</span></div>
+        <div class="leg-row"><div class="leg-swatch" style="background:rgba(96,165,250,0.12);border:2px solid #60a5fa"></div><span>District boundary</span></div>
+        <div class="leg-row"><div class="leg-swatch" style="background:rgba(147,197,253,0.06);border:2px solid #93c5fd"></div><span>State boundary</span></div>
       </div>
       <div id="map-status">—</div>
     </div>
@@ -370,7 +383,8 @@ const filterState = {
   source_pdf: new Set(), category: new Set(), crop_name: new Set(),
   variety_type: new Set(), classification: new Set(), season: new Set(),
   irrigation: new Set(), maturity: new Set(), applicant_type: new Set(),
-  state: new Set()
+  state: new Set(),
+  tolerance: new Map(),   // Map<stressType, "sensitive"|"moderate"|"tolerant">
 };
 
 function pillClick(groupEl, value) {
@@ -394,21 +408,55 @@ function getFilters() {
 function buildQuery(f) {
   const p = new URLSearchParams({ page, limit: LIMIT, sort: sortField, order: sortOrder });
   if (f.search) p.set('search', f.search);
-  // append one param per selected value (server reads them as a list)
-  Object.entries(filterState).forEach(([key, set]) => {
-    if (key === 'applicant_type') {
-      set.forEach(v => p.append('applicant_type', v));
+  Object.entries(filterState).forEach(([key, val]) => {
+    if (key === 'tolerance') {
+      // Map<stressType, level> → "type:level" strings
+      val.forEach((level, type) => p.append('tolerance', `${type}:${level}`));
     } else {
-      set.forEach(v => p.append(key, v));
+      val.forEach(v => p.append(key, v));
     }
   });
   return p.toString();
 }
 
 function applyFilters() { page = 1; load(); }
+
+// ── Tolerance cycling ─────────────────────────────────────────────────────────
+const TOL_CYCLE  = ['sensitive', 'moderate', 'tolerant'];
+const TOL_STYLES = {
+  sensitive: { background: 'rgba(248,113,113,0.18)', borderColor: '#f87171', color: '#f87171' },
+  moderate:  { background: 'rgba(251,191,36,0.18)',  borderColor: '#fbbf24', color: '#fbbf24' },
+  tolerant:  { background: 'rgba(52,211,153,0.18)',  borderColor: '#34d399', color: '#34d399' },
+};
+
+function toleranceCycle(btn, stressType) {
+  const current = filterState.tolerance.get(stressType);
+  const idx     = current !== undefined ? TOL_CYCLE.indexOf(current) : -1;
+  const next    = TOL_CYCLE[idx + 1];   // undefined when at end of cycle
+
+  if (next === undefined) {
+    filterState.tolerance.delete(stressType);
+    btn.classList.remove('active');
+    btn.textContent  = btn.dataset.label;
+    btn.style.cssText = '';
+  } else {
+    filterState.tolerance.set(stressType, next);
+    const s = TOL_STYLES[next];
+    btn.classList.add('active');
+    btn.textContent = `${btn.dataset.label} · ${next}`;
+    Object.assign(btn.style, s);
+  }
+  page = 1; load();
+}
 function clearFilters() {
-  Object.keys(filterState).forEach(k => { filterState[k] = new Set(); });
-  document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+  Object.keys(filterState).forEach(k => {
+    if (filterState[k] instanceof Map) filterState[k].clear();
+    else filterState[k] = new Set();
+  });
+  document.querySelectorAll('.pill').forEach(p => {
+    p.classList.remove('active');
+    if (p.dataset.label) { p.textContent = p.dataset.label; p.style.cssText = ''; }
+  });
   document.getElementById('search').value = '';
   page = 1; load();
 }
@@ -806,11 +854,17 @@ async function loadMeta() {
 
     const populate = (id, values, group) => {
       const container = document.getElementById(id);
-      (values || []).forEach(v => {
+      if (!values || !values.length) {
+        container.innerHTML =
+          '<span style="color:var(--muted);font-size:10px;padding:2px 4px">No data</span>';
+        return;
+      }
+      values.forEach(v => {
         const btn = document.createElement('button');
         btn.className = 'pill';
         btn.dataset.value = v;
-        btn.textContent = v.replace('.pdf', '');
+        // .pdf files show without extension; other values get title-cased
+        btn.textContent = v.endsWith('.pdf') ? v.replace('.pdf', '') : titleCase(v);
         btn.onclick = () => pillClick(container, v);
         container.appendChild(btn);
       });
@@ -862,10 +916,75 @@ function switchView(view) {
 }
 
 // ── Leaflet map ───────────────────────────────────────────────────────────────
-let _map         = null;
-let _appCluster  = null;
-let _suitCluster = null;
+let _map            = null;
+let _appCluster     = null;   // village-level point markers (clustered)
+let _appPolygons    = null;   // tehsil / district / state boundary polygons
+let _suitCluster    = null;
 let _mapInitPromise = null;
+let _polyGroupsData = [];     // [{boundary, records, place, level}] — used for overlap detection
+
+// ── Ray-casting point-in-polygon (no external library needed) ─────────────────
+function _pointInRing(lng, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if (((yi > lat) !== (yj > lat)) &&
+        (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi))
+      inside = !inside;
+  }
+  return inside;
+}
+function pointInGeometry(lng, lat, geometry) {
+  if (!geometry) return false;
+  const polys = geometry.type === 'Polygon'      ? [geometry.coordinates]
+              : geometry.type === 'MultiPolygon' ?  geometry.coordinates
+              : [];
+  return polys.some(poly => _pointInRing(lng, lat, poly[0]) &&
+    poly.slice(1).every(hole => !_pointInRing(lng, lat, hole)));
+}
+
+// Collect every stored polygon group containing the click point
+function groupsAtPoint(lng, lat) {
+  return _polyGroupsData.filter(g => pointInGeometry(lng, lat, g.boundary));
+}
+
+const POLYGON_STYLES = {
+  tehsil:   { color: '#3b82f6', weight: 2,   fillColor: '#3b82f6', fillOpacity: 0.18 },
+  district: { color: '#60a5fa', weight: 1.5, fillColor: '#60a5fa', fillOpacity: 0.12 },
+  state:    { color: '#93c5fd', weight: 1,   fillColor: '#93c5fd', fillOpacity: 0.06 },
+};
+
+function buildTooltip(d, ag) {
+  const level = ag.point_level || 'unknown';
+  const place = ag.village || ag.tehsil || ag.district || ag.state || '—';
+  return `<b>${esc(d.denomination || '—')}</b><br>
+    <span style="color:#555">${esc(d.crop_name || '')}${d.applicant ? ' · ' + esc(d.applicant) : ''}</span><br>
+    <span style="color:#777;font-size:10px">${level}: ${esc(place)}</span>`;
+}
+
+function showGroupPopup(latlng, records, place) {
+  const rows = records.map(d => `
+    <div onclick="showGroupPopup._open('${d._id}')"
+      style="cursor:pointer;padding:5px 0;border-bottom:1px solid #e5e7eb;
+             transition:background 0.1s" onmouseover="this.style.background='#f0f4ff'"
+             onmouseout="this.style.background=''"
+    >
+      <div style="font-weight:600;font-size:12px;color:#1e293b">${esc(d.denomination || '—')}</div>
+      <div style="color:#64748b;font-size:10px">${esc(d.crop_name || '')}${d.applicant ? ' · ' + esc(d.applicant) : ''}</div>
+    </div>`).join('');
+
+  L.popup({ maxWidth: 260, className: 'group-popup' })
+    .setLatLng(latlng)
+    .setContent(`
+      <div style="font-size:11px;font-weight:700;color:#64748b;margin-bottom:6px;padding-bottom:5px;border-bottom:1px solid #e5e7eb;word-break:break-word">
+        ${esc(place)} — ${records.length} varieties
+      </div>
+      <div style="max-height:200px;overflow-y:auto">${rows}</div>
+    `)
+    .openOn(_map);
+}
+// Attach the open helper so inline onclick can reach it
+showGroupPopup._open = (id) => { _map.closePopup(); openDetail(id); };
 
 function ensureMapInit() {
   if (!_mapInitPromise) _mapInitPromise = _doInitMap();
@@ -888,36 +1007,13 @@ async function _doInitMap() {
     subdomains: 'abcd', maxZoom: 19,
   }).addTo(_map);
 
-  // Prepare cluster groups (added to map after overlay layers so they render on top)
+  // Prepare layer groups (added after overlay layers so they render on top)
+  _appPolygons = L.layerGroup();
   _appCluster  = L.markerClusterGroup({ maxClusterRadius: 40, showCoverageOnHover: false });
   _suitCluster = L.markerClusterGroup({ maxClusterRadius: 40, showCoverageOnHover: false });
 
-  // India state boundaries + outside-India mask
-  try {
-    const res    = await fetch('/api/geodata/states');
-    const statesGj = await res.json();
-
-    // State border lines — thin slate-gray, no fill
-    L.geoJSON(statesGj, {
-      interactive: false,
-      style: { color: '#94a3b8', weight: 0.7, fillOpacity: 0 },
-    }).addTo(_map);
-
-    // Build India union polygon with turf, then mask the rest of the world
-    let india = statesGj.features[0];
-    for (let i = 1; i < statesGj.features.length; i++) {
-      try { india = turf.union(india, statesGj.features[i]); } catch(_) {}
-    }
-    const mask = turf.mask(india);
-    L.geoJSON(mask, {
-      interactive: false,
-      style: { fillColor: '#f8f9fb', fillOpacity: 0.82, stroke: false },
-    }).addTo(_map);
-  } catch(e) {
-    console.warn('State boundary overlay failed:', e);
-  }
-
-  // Add clusters on top of all overlay layers
+  // Add layers (polygons first, then point clusters on top)
+  _map.addLayer(_appPolygons);
   _map.addLayer(_appCluster);
   _map.addLayer(_suitCluster);
 }
@@ -930,37 +1026,6 @@ const CAT_COLORS = {
 };
 function catColor(cat) { return CAT_COLORS[cat] || '#475569'; }
 
-// Pick most-granular available point for applicant
-function bestApplicantPoint(ag) {
-  if (!ag) return null;
-  if (ag.district_point?.coordinates) return { pt: ag.district_point, label: `${ag.district}, ${ag.state}`, precision: 'district' };
-  if (ag.state_point?.coordinates)    return { pt: ag.state_point,    label: ag.state || ag.raw_state, precision: 'state' };
-  return null;
-}
-
-// Build suitability point list, preferring district entries over state entries
-function suitabilityPoints(d) {
-  const pts = [];
-  const coveredRaw = new Set();
-
-  // First pass: district-level entries (most granular)
-  (d.suitability_districts || []).forEach(e => {
-    if (!e.point?.coordinates) return;
-    pts.push({ pt: e.point, label: `${e.district}, ${e.state}`, context: 'Suitability (district)' });
-    coveredRaw.add((e.raw || '').toLowerCase());
-  });
-
-  // Second pass: state-level entries not already covered by a district pin
-  (d.suitability_states || []).forEach(s => {
-    if (!s.point?.coordinates) return;
-    // Skip if a district entry already covers this state entry
-    const rawKey = (s.raw || '').toLowerCase();
-    if (coveredRaw.has(rawKey)) return;
-    pts.push({ pt: s.point, label: s.name || s.raw, context: 'Suitability (state)' });
-  });
-
-  return pts;
-}
 
 async function loadMap() {
   const status = document.getElementById('map-status');
@@ -970,6 +1035,7 @@ async function loadMap() {
 
   status.textContent = 'Loading pins…';
   _appCluster.clearLayers();
+  _appPolygons.clearLayers();
   _suitCluster.clearLayers();
 
   let data;
@@ -992,38 +1058,110 @@ async function loadMap() {
     return;
   }
 
-  let appCount = 0, suitCount = 0;
+  const levelCounts = { village: 0, tehsil: 0, district: 0, state: 0 };
 
+  // ── Village points → clustered markers ────────────────────────────────────
   data.forEach(d => {
-    const color = catColor(d.category);
+    const ag = d.applicant_geo;
+    if (!ag || !ag.point) return;
+    const level = ag.point_level || 'unresolved';
 
-    // ── Applicant marker — blue, most granular point, click → detail panel ────
-    const ap = bestApplicantPoint(d.applicant_geo);
-    if (ap) {
-      const [lon, lat] = ap.pt.coordinates;
+    if (level === 'village') {
+      const [lon, lat] = ag.point.coordinates;
       const m = L.circleMarker([lat, lon], {
         radius: 7, fillColor: '#3b82f6', color: '#1d4ed8',
         weight: 1.5, fillOpacity: 0.9,
       });
+      m.bindTooltip(buildTooltip(d, ag), { sticky: true });
       m.on('click', () => openDetail(d._id));
       _appCluster.addLayer(m);
-      appCount++;
-    }
-
-    // ── Suitability markers — category color, click → same detail panel ───────
-    suitabilityPoints(d).forEach(sp => {
-      const [lon, lat] = sp.pt.coordinates;
+      levelCounts.village++;
+    } else if (!ag.boundary) {
+      // Fallback: level known but no boundary stored → dim centroid marker
+      const [lon, lat] = ag.point.coordinates;
       const m = L.circleMarker([lat, lon], {
-        radius: 6, fillColor: color, color: '#fff',
-        weight: 1, fillOpacity: 0.75,
+        radius: 5, fillColor: '#94a3b8', color: '#64748b',
+        weight: 1, fillOpacity: 0.7,
       });
+      m.bindTooltip(buildTooltip(d, ag), { sticky: true });
       m.on('click', () => openDetail(d._id));
-      _suitCluster.addLayer(m);
-      suitCount++;
-    });
+      _appCluster.addLayer(m);
+    }
   });
 
-  status.textContent = `${data.length} varieties · ${appCount} applicant · ${suitCount} suitability`;
+  // ── Boundary polygons → group by location, then handle overlaps via PIP ──────
+  // Key: "level:resolvedName" — records at same location share one rendered polygon.
+  _polyGroupsData = [];
+  const polyGroups = new Map();
+  data.forEach(d => {
+    const ag = d.applicant_geo;
+    if (!ag || !ag.boundary) return;
+    const level = ag.point_level || 'unresolved';
+    if (level === 'village') return;
+    const place = ag.village || ag.tehsil || ag.district || ag.state || '';
+    const key   = `${level}:${place}`;
+    if (!polyGroups.has(key)) polyGroups.set(key, { ag, records: [] });
+    polyGroups.get(key).records.push(d);
+    if (level in levelCounts) levelCounts[level]++;
+  });
+
+  // Render state first → district → tehsil so more precise layers are on top visually
+  const LEVEL_ORDER = { state: 0, district: 1, tehsil: 2 };
+  const sortedGroups = [...polyGroups.values()]
+    .sort((a, b) => (LEVEL_ORDER[a.ag.point_level] ?? 1) - (LEVEL_ORDER[b.ag.point_level] ?? 1));
+
+  sortedGroups.forEach(({ ag, records }) => {
+    const level = ag.point_level;
+    const place = ag.village || ag.tehsil || ag.district || ag.state || level;
+    const style = POLYGON_STYLES[level] || POLYGON_STYLES.district;
+
+    // Store for overlap detection on click
+    _polyGroupsData.push({ boundary: ag.boundary, records, place, level });
+
+    const hoverTip = records.length === 1
+      ? buildTooltip(records[0], ag)
+      : `<b>${esc(place)}</b> · <span style="color:#4f8ef7">${records.length} varieties</span>`;
+
+    const poly = L.geoJSON(ag.boundary, { style, interactive: true });
+    poly.bindTooltip(hoverTip, { sticky: true });
+
+    // Capture in closure so the click handler always has this group's data,
+    // even when PIP fails (e.g. click lands on the border stroke, not the fill).
+    const selfGroup = { records, place, level };
+
+    poly.on('click', e => {
+      L.DomEvent.stopPropagation(e);
+      const { lng, lat } = e.latlng;
+
+      // PIP finds additional overlapping groups (district inside state, etc.).
+      // Always include this group regardless of PIP result.
+      const extras = groupsAtPoint(lng, lat)
+        .filter(g => !(g.place === place && g.level === level));
+      const allGroups = [selfGroup, ...extras];
+
+      const seen = new Set();
+      const allRecords = [];
+      allGroups.forEach(g => g.records.forEach(r => {
+        if (!seen.has(r._id)) { seen.add(r._id); allRecords.push(r); }
+      }));
+
+      if (allRecords.length === 1) {
+        openDetail(allRecords[0]._id);
+      } else {
+        const places = [...new Set(allGroups.map(g => `${g.level}: ${g.place}`))].join(', ');
+        showGroupPopup(e.latlng, allRecords, places);
+      }
+    });
+
+    _appPolygons.addLayer(poly);
+  });
+
+  const parts = [];
+  if (levelCounts.village)  parts.push(`${levelCounts.village} village`);
+  if (levelCounts.tehsil)   parts.push(`${levelCounts.tehsil} tehsil`);
+  if (levelCounts.district) parts.push(`${levelCounts.district} district`);
+  if (levelCounts.state)    parts.push(`${levelCounts.state} state`);
+  status.textContent = `${data.length} varieties · ${parts.join(' · ')}`;
 
   setTimeout(() => _map.invalidateSize(), 50);
 }
